@@ -110,6 +110,7 @@ add_custom_target(
         COMMAND python3 ${TEST_DATA}/test_short_standalone.py ./megahit
         COMMAND ./test_local_support
         COMMAND python3 ${TEST_DATA}/test_local_support.py ./megahit
+        COMMAND python3 ${TEST_DATA}/test_overlap_correct.py ./megahit
         COMMAND python3 ${TEST_DATA}/test_benchmark_simulate.py
         COMMAND python3 ${TEST_DATA}/test_benchmark_evaluate.py
         COMMAND rm -rf test-random && python3 ${TEST_DATA}/generate_random_fasta.py > random.fa && ./megahit -r random.fa --k-list 255 --min-count 1 -o test-random

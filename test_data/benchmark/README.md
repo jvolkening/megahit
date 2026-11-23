@@ -128,12 +128,19 @@ contigs versus 26 with k=21, so the change is not uniformly better.
 As a separate experiment, one round of minimap2 v2.31 overlap mapping and
 Racon v1.5.0 fragment consensus was applied before assembly with k=15 and
 the local filter. The commands below reproduce the first seed from `trial10`
-generated above with `--error 0.05`:
+generated above with `--error 0.05`, using the same preprocessing parameters.
+MEGAHIT's experimental
+`--overlap-correct` option now performs these two preprocessing steps using
+tools on `PATH`; it accepts single-end input only, normalizes identifiers,
+discards FASTQ quality scores, and refuses incomplete corrected read sets.
+It preserves the original files and writes `corrected.reads.fa` separately.
+It does not set the k-list or local filter automatically. Renaming reads can
+change overlap tie-breaking, so results need not exactly match the earlier
+manual run; the integrated first-seed run produced 79 contigs and covered
+135,199/152,222 HSV-1 bases.
 
 ```sh
-minimap2 -x ava-ont -k11 -w5 -m40 -s40 -c -t 1 trial10.reads.fa trial10.reads.fa > trial10.overlaps.paf
-racon -f -u -t 1 trial10.reads.fa trial10.overlaps.paf trial10.reads.fa > trial10.corrected.fa
-megahit -r trial10.corrected.fa -o trial10-corrected -t 1 -m 800000000 --mem-flag 2 --min-local-support 2 --k-list 15,21,29,39,59,79,99,119,141
+megahit -r trial10.reads.fa -o trial10-corrected -t 1 -m 800000000 --mem-flag 2 --overlap-correct --min-local-support 2 --k-list 15,21,29,39,59,79,99,119,141
 python3 "$MEGAHIT_SRC/test_data/benchmark/evaluate.py" minimap2 trial10.ref.fa trial10-corrected/final.contigs.fa
 ```
 
