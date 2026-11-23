@@ -110,6 +110,65 @@ unaligned ends, and are not unique reference coverage):
 | No passing alignment | - | 0 | 0 | 0 | 0 |
 | **Total** | - | **49** | **208,866** | **356** | **199,407** |
 
+### Exploratory overlap correction at 10x
+
+These are research comparisons, not recommended production settings. The
+simulator's independent errors are easier than realistic nanopore errors, and
+the results below expose potential strain loss and misassembly.
+
+At 5% error, three seeds (932414, 932415, 932416) were assembled with one
+thread and `--min-local-support 2`. Using the existing k-list beginning with
+15 instead of 21 produced 255, 278 and 263 contigs, compared with 356, 298
+and 347 for the original list. For the first seed, one 331 bp contig had two
+passing primary alignments to distant HSV-1 positions on opposite strands
+(a possible misjoin); cross-reference alignment metrics alone do not catch
+such within-reference events. At 2% error, starting at k=15 produced 32 HSV-1
+contigs versus 26 with k=21, so the change is not uniformly better.
+
+As a separate experiment, one round of minimap2 v2.31 overlap mapping and
+Racon v1.5.0 fragment consensus was applied before assembly with k=15 and
+the local filter. The commands below reproduce the first seed from `trial10`
+generated above with `--error 0.05`:
+
+```sh
+minimap2 -x ava-ont -k11 -w5 -m40 -s40 -c -t 1 trial10.reads.fa trial10.reads.fa > trial10.overlaps.paf
+racon -f -u -t 1 trial10.reads.fa trial10.overlaps.paf trial10.reads.fa > trial10.corrected.fa
+megahit -r trial10.corrected.fa -o trial10-corrected -t 1 -m 800000000 --mem-flag 2 --min-local-support 2 --k-list 15,21,29,39,59,79,99,119,141
+python3 "$MEGAHIT_SRC/test_data/benchmark/evaluate.py" minimap2 trial10.ref.fa trial10-corrected/final.contigs.fa
+```
+
+In the three 5% seeds, corrected-read assemblies produced 77, 73 and 76
+contigs (N50 5,495, 6,049 and 5,875 bp), compared with 356, 298 and 347
+contigs (N50 646, 688 and 663 bp) for uncorrected k=21 filtered assemblies.
+For the first seed, corrected-read HSV-1 coverage was 135,304/152,222 bp
+versus 122,633 bp in the uncorrected filtered assembly. The unfiltered,
+uncorrected k=21 assembly covered 144,014 bp. Racon emitted 3,791 reads
+for 3,791 input reads in each of these runs, but this is not guaranteed by
+these settings for other inputs.
+
+The method is **not strain-safe**: in a separate 10x major / 5x minor,
+2%-divergent influenza simulation, eight original reads contained at least
+four co-occurring minor SNPs (covering 19 of 20 sites); no corrected reads
+met that heuristic. The uncorrected k=15 assembly without local filtering
+had two qualifying contigs covering 16 sites, but neither a filtered
+corrected assembly nor an assembly combining raw and corrected reads without
+the filter had qualifying contigs. Those observations do not prove every
+minor allele was erased, but they demonstrate loss of the tested haplotype
+signal. As another exploratory tradeoff, selecting one raw or corrected
+copy per read by a fixed SHA-256 hash retained no qualifying minor contigs
+with 50% raw reads; 75% raw produced one qualifying contig with 15 sites
+without filtering, but 107 contigs overall versus 83 for the all-raw
+unfiltered run. Filtering lost the qualifying signal at both proportions.
+These single-mixture results do not establish a safe correction policy.
+
+Across the mixed-genome tests, 53-171 overlap pairs per replicate had
+high-mapping-quality read alignments at disjoint positions on the same
+reference; repeats or ambiguous mappings can produce these apparent
+discordances. Reference alignment and overlap counts do not exclude
+misassemblies. Keep the original reads, and do not treat consensus correction
+or the local filter as preserving minority strains. All-vs-all mapping can
+also become costly at high depth.
+
 The benchmark creates hundreds of megabytes of reads and can take substantial
 time and memory. Without `--real-references`, the generator uses random
 sequences with approximately corresponding genome and segment lengths.
