@@ -8,6 +8,10 @@ parser.add_argument('prefix', help='output prefix; writes .ref.fa and .reads.fa'
 parser.add_argument('--error', type=float, required=True,
                     help='per-template-base probability of an error event')
 parser.add_argument('--coverage', type=int, default=1000)
+parser.add_argument('--virus-control-depth', type=int, default=15,
+                    help='nominal depth of the synthetic small-virus control (default: 15)')
+parser.add_argument('--background-depth', type=int, default=25,
+                    help='nominal depth of the synthetic background control (default: 25)')
 parser.add_argument('--seed', type=int, default=932414,
                     help='random seed for reproducible simulation (default: 932414)')
 parser.add_argument('--real-references', action='store_true',
@@ -17,8 +21,11 @@ parser.add_argument('--flu-only', action='store_true',
 parser.add_argument('--minor-strain-depth', type=int, default=0,
                     help='add a 2%% divergent copy of the first influenza segment at this depth')
 args = parser.parse_args()
-if not 0 <= args.error <= 1 or args.coverage <= 0 or args.minor_strain_depth < 0:
-    parser.error('error must be in [0,1], coverage positive, and minor depth nonnegative')
+if (not 0 <= args.error <= 1 or args.coverage <= 0 or
+        args.virus_control_depth <= 0 or args.background_depth <= 0 or
+        args.minor_strain_depth < 0):
+    parser.error('error must be in [0,1], coverage and control depths positive, '
+                 'and minor depth nonnegative')
 if (args.flu_only or args.minor_strain_depth) and not args.real_references:
     parser.error('--flu-only and --minor-strain-depth require --real-references')
 
@@ -29,8 +36,8 @@ entries = [('segment_%d' % (i + 1), size, args.coverage)
            for i, size in enumerate(sizes)]
 entries += [('coronavirus_size', 30000, args.coverage),
             ('herpesvirus_size', 152000, args.coverage),
-            ('low_depth_virus', 2500, 15),
-            ('bacterial_background', 30000, 25)]
+            ('low_depth_virus', 2500, args.virus_control_depth),
+            ('bacterial_background', 30000, args.background_depth)]
 genomes = [(name, ''.join(rng.choices(alphabet, k=size)), depth)
            for name, size, depth in entries]
 if args.real_references:
@@ -64,8 +71,10 @@ if args.real_references:
         for pos in rng.sample(range(len(bases)), max(1, round(len(bases) * 0.02))):
             bases[pos] = rng.choice(alphabet.replace(bases[pos], ''))
         genomes.append((name + '_minor', ''.join(bases), args.minor_strain_depth))
-    genomes += [('low_depth_virus', ''.join(rng.choices(alphabet, k=2500)), 15),
-                ('bacterial_background', ''.join(rng.choices(alphabet, k=30000)), 25)]
+    genomes += [('low_depth_virus', ''.join(rng.choices(alphabet, k=2500)),
+                 args.virus_control_depth),
+                ('bacterial_background', ''.join(rng.choices(alphabet, k=30000)),
+                 args.background_depth)]
 
 with open(args.prefix + '.ref.fa', 'x') as ref:
     for name, seq, depth in genomes:

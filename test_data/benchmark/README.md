@@ -7,7 +7,9 @@ distributed template lengths of 400-800 bases. Reads are sampled from linear
 references, so coverage falls at their ends. The `--coverage` value is nominal:
 the number of reads is `reference_length * coverage / 600`, rounded down.
 There is a 15x random-sequence small-virus control and a 25x random-sequence
-background control; the latter is not a realistic bacterial genome.
+background control by default; their depths can be changed with
+`--virus-control-depth` and `--background-depth`. The background is not a
+realistic bacterial genome.
 
 The real-reference mode uses influenza A/California/07/2009 segments
 NC_026431.1-NC_026438.1, SARS-CoV-2 NC_045512.2, and HSV-1 NC_001806.2.
@@ -70,6 +72,44 @@ At 10% error, the mixed-genome experimental run used one thread and produced
 was 21,829/29,903 bases for SARS-CoV-2 and 82,801/152,222 for HSV-1. The
 two-thread default run is not a controlled comparison because legacy local
 read processing depends on thread count.
+
+For a nominal 10x mixed community, including both controls, use:
+
+```sh
+python3 "$MEGAHIT_SRC/test_data/benchmark/simulate.py" trial10 --real-references --coverage 10 --virus-control-depth 10 --background-depth 10 --error 0.02
+megahit -r trial10.reads.fa -o trial10-default -t 1 -m 800000000 --mem-flag 2
+megahit -r trial10.reads.fa -o trial10-filtered -t 1 -m 800000000 --mem-flag 2 --min-local-support 2
+python3 "$MEGAHIT_SRC/test_data/benchmark/evaluate.py" minimap2 trial10.ref.fa trial10-filtered/final.contigs.fa
+```
+
+Repeat with `--error 0.05` and a new prefix. In single-seed comparisons,
+filtering reduced contigs from 298 to 49 at 2% error and from 651 to 356 at
+5% error. It also reduced HSV-1 reference coverage from 139,993 to 135,664
+of 152,222 bases at 2%, and from 144,014 to 122,633 at 5%. SARS-CoV-2
+coverage fell from 29,459 to 29,301 of 29,903 bases at 2%, and from 29,394 to
+25,830 at 5%. The simulator samples linear references, leaving their ends
+underrepresented; these results do not establish real-data performance.
+
+Filtered assembly by reference (summed lengths include overlaps and
+unaligned ends, and are not unique reference coverage):
+
+| Reference | Expected bp | 2% contigs | 2% bp | 5% contigs | 5% bp |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Influenza NC_026431.1 | 982 | 1 | 854 | 1 | 652 |
+| Influenza NC_026432.1 | 863 | 1 | 773 | 1 | 679 |
+| Influenza NC_026433.1 | 1,701 | 1 | 1,501 | 3 | 1,554 |
+| Influenza NC_026434.1 | 1,410 | 1 | 1,070 | 4 | 1,346 |
+| Influenza NC_026435.1 | 2,274 | 1 | 2,131 | 4 | 2,081 |
+| Influenza NC_026436.1 | 1,497 | 1 | 1,283 | 2 | 963 |
+| Influenza NC_026437.1 | 2,151 | 2 | 2,001 | 3 | 1,788 |
+| Influenza NC_026438.1 | 2,280 | 1 | 2,103 | 2 | 1,709 |
+| SARS-CoV-2 | 29,903 | 8 | 29,359 | 57 | 28,042 |
+| HSV-1 | 152,222 | 26 | 135,600 | 228 | 130,324 |
+| Synthetic virus | 2,500 | 1 | 2,195 | 4 | 1,828 |
+| Synthetic bacterial background | 30,000 | 5 | 29,996 | 47 | 28,441 |
+| No passing alignment | - | 0 | 0 | 0 | 0 |
+| **Total** | - | **49** | **208,866** | **356** | **199,407** |
+
 The benchmark creates hundreds of megabytes of reads and can take substantial
 time and memory. Without `--real-references`, the generator uses random
 sequences with approximately corresponding genome and segment lengths.
@@ -77,7 +117,10 @@ sequences with approximately corresponding genome and segment lengths.
 The evaluator uses sensitive minimap2 `map-ont` alignment and reports primary
 alignments of at least 100 bases and 80% identity, reference coverage,
 unaligned contigs, cross-reference alignments, and redundant aligned reference
-bases. Redundancy is an overlap proxy, not a spurious-contig count: legitimate
+bases. Per reference, it also reports the number and summed full lengths of
+distinct assigned contigs, including their unaligned ends. A contig with
+passing alignments to multiple references is counted under each.
+Redundancy is an overlap proxy, not a spurious-contig count: legitimate
 repeats and overlapping contigs also contribute. Identity excludes unaligned
 bases. Full misassembly, variant, false-positive and strain-specific analysis
 requires additional tools and datasets.

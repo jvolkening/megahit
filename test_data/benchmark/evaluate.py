@@ -44,6 +44,7 @@ cmd = [aligner, '-x', 'map-ont', '-k', '11', '-w', '5', '-s', '20',
        '-c', reference, contigs]
 alignments = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)
 targets = collections.defaultdict(list)
+target_contigs = collections.defaultdict(set)
 queries = collections.defaultdict(list)
 query_targets = collections.defaultdict(set)
 matches = blocks = 0
@@ -53,6 +54,7 @@ for line in alignments.stdout.splitlines():
             int(fields[9]) / int(fields[10]) < 0.8):
         continue
     targets[fields[5]].append((int(fields[7]), int(fields[8])))
+    target_contigs[fields[5]].add(fields[0])
     queries[fields[0]].append((int(fields[2]), int(fields[3])))
     query_targets[fields[0]].add(fields[5])
     matches += int(fields[9])
@@ -67,4 +69,6 @@ for name, length in refs.items():
     covered = coverage(hits)
     redundant = sum(right - left for left, right in hits) - covered
     print(name, 'reference', length, 'covered', covered,
-          'alignments', len(hits), 'redundant_ref_bases', redundant)
+          'alignments', len(hits), 'redundant_ref_bases', redundant,
+          'contigs', len(target_contigs[name]),
+          'contig_bases', sum(ctgs[contig] for contig in target_contigs[name]))
