@@ -72,9 +72,15 @@ The contigs can be found `final.contigs.fa` in the output directory.
 - `--kmin-1pass`: if sequencing depth is low and too much memory used when build the graph of k_min
 - `--presets meta-large`: if the metagenome is complex (i.e., bio-diversity is high, for example soil metagenomes)
 - `--cleaning-rounds 1 --disconnect-ratio 0`: get less pruned assembly (usually shorter contigs)
+- `--no-local --retain-short-standalone`: retain isolated contigs down to `--min-contig-len` at the iteration where they become standalone. This can recover small sequences, but can also emit error-derived contigs; it does not correct noisy reads.
+- `--min-local-support 2`: experimental filtering of local assemblies with low k-mer support. This can reduce redundant contigs, but can also lose genuine sequence, including low-abundance viruses and strains; it is not recommended when their recovery is critical. Excluded local candidates are saved in `rejected_local/`, but they do not necessarily contain all sequences lost by later graph changes. Keep the original reads.
+- `--overlap-correct`: experimentally correct single-end `-r` reads before assembly using minimap2 and Racon on `PATH` (tested with minimap2 2.31 and Racon 1.5.0). **Correction can erase minority strains or misjoin repeats** and is not recommended when strain recovery is critical. It uses all-vs-all overlaps, which can require substantial time and disk space. Original reads are never modified; corrected reads are saved as `corrected.reads.fa` in the output directory, with normalized identifiers and no FASTQ qualities. Paired-end inputs are not supported in this mode. This option does not change k-mer or local-support settings; the experimental benchmark additionally used `--k-list 15,21,29,39,59,79,99,119,141 --min-local-support 2`.
 - `--continue -o out`: resume an interrupted job from `out`
 
 To see the full manual, run `megahit` without parameters or with `-h`.
+
+An exploratory noisy-read viral assembly benchmark is described in
+[`test_data/benchmark`](test_data/benchmark/README.md).
 
 Also, our [wiki](https://github.com/voutcn/megahit/wiki) may be helpful.
 

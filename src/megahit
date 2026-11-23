@@ -20,7 +20,9 @@
 
 
 
+import bz2
 import getopt
+import gzip
 import json
 import logging
 import multiprocessing
@@ -72,6 +74,12 @@ Optional Arguments:
     --max-tip-len            <int>          remove tips less than this value [2*k]
     --cleaning-rounds        <int>          number of rounds for graph cleanning [5]
     --no-local                              disable local assembly
+    --min-local-support      <int>          experimental: require this many local k-mer observations for
+                                            at least half a local contig's k-mers (0 disables) [0];
+                                            may lose genuine strains; excluded candidates are saved separately
+    --retain-short-standalone               with --no-local, retain isolated contigs down to --min-contig-len
+    --overlap-correct                       experimental single-end read correction with minimap2 and Racon;
+                                            may erase minority strains or misjoin repeats
     --kmin-1pass                            use 1pass mode to build SdBG of k_min
 
   Presets parameters:
@@ -176,6 +184,9 @@ class Options:
         self.max_tip_len = -1
         self.no_mercy = False
         self.no_local = False
+        self.min_local_support = 0
+        self.retain_short_standalone = False
+        self.overlap_correct = False
         self.bubble_level = 2
         self.merge_len = 20
         self.merge_similar = 0.95
@@ -308,6 +319,9 @@ def parse_option(argv):
                                     'min-count=',
                                     'no-mercy',
                                     'no-local',
+                                    'min-local-support=',
+                                    'retain-short-standalone',
+                                    'overlap-correct',
                                     'max-tip-len=',
                                     'bubble-level=',
                                     'prune-level=',
@@ -386,6 +400,12 @@ def parse_option(argv):
             opt.no_mercy = True
         elif option == '--no-local':
             opt.no_local = True
+        elif option == '--min-local-support':
+            opt.min_local_support = int(value)
+        elif option == '--retain-short-standalone':
+            opt.retain_short_standalone = True
+        elif option == '--overlap-correct':
+            opt.overlap_correct = True
         elif option == '--disconnect-ratio':
             opt.disconnect_ratio = float(value)
         elif option == '--low-local-ratio':
@@ -454,6 +474,12 @@ def setup_output_dir():
             raise Usage(
                 'Output directory ' + opt.out_dir +
                 ' already exists, please change the parameter -o to another value to avoid overwriting.')
+        if os.path.exists(os.path.join(opt.out_dir, 'rejected_local')):
+            raise Usage('rejected_local already exists; use a fresh output directory')
+        if os.path.exists(os.path.join(opt.out_dir, 'corrected.reads.fa')):
+            raise Usage('corrected.reads.fa already exists; use a fresh output directory')
+        if os.path.exists(os.path.join(opt.out_dir, '.corrected.reads.partial.fa')):
+            raise Usage('.corrected.reads.partial.fa already exists; use --continue or a fresh output directory')
 
         if opt.temp_dir == '':
             opt.temp_dir = os.path.join(opt.out_dir, 'tmp')
@@ -487,6 +513,12 @@ def check_and_correct_option():
     # set mode
     if opt.memory < 0:
         raise Usage('-m cannot be less than 0!')
+    if opt.retain_short_standalone and not opt.no_local:
+        raise Usage('--retain-short-standalone requires --no-local')
+    if opt.min_local_support < 0 or opt.min_local_support > 2147483647:
+        raise Usage('--min-local-support must be between 0 and 2147483647')
+    if opt.min_local_support and opt.no_local:
+        raise Usage('--min-local-support cannot be combined with --no-local')
 
     if opt.presets != '':
         opt.auto_k = True
@@ -591,6 +623,11 @@ def check_reads():
     for r in opt.pe1 + opt.pe2 + opt.se + opt.pe12:
         if not os.path.exists(r):
             raise Usage('Cannot find file ' + r)
+    if opt.overlap_correct:
+        if not opt.se or opt.pe1 or opt.pe2 or opt.pe12:
+            raise Usage('--overlap-correct requires single-end -r inputs only')
+        logger.warning('Overlap correction can erase minority strains and misjoin repeats; '
+                       'retain the original reads. All-vs-all overlaps can be costly.')
 
 
 def detect_available_mem():
@@ -664,6 +701,115 @@ def inpipe_cmd(file_name):
         return ''
 
 
+def assembly_single_reads():
+    if opt.overlap_correct:
+        return [os.path.join(opt.out_dir, 'corrected.reads.fa')]
+    return opt.se
+
+
+def fastx_sequences(path):
+    opener = gzip.open if path.endswith('.gz') else bz2.open if path.endswith('.bz2') else open
+    with opener(path, 'rt') as source:
+        header = source.readline()
+        while header:
+            if not header.startswith(('>', '@')):
+                raise Usage('Invalid FASTA/FASTQ header in ' + path)
+            fastq = header.startswith('@')
+            seq = []
+            if fastq:
+                for line in source:
+                    if line.startswith('+'):
+                        break
+                    seq.append(line.strip())
+                else:
+                    raise Usage('Missing FASTQ quality separator in ' + path)
+                sequence = ''.join(seq)
+                quality_length = 0
+                while quality_length < len(sequence):
+                    quality = source.readline()
+                    if not quality:
+                        raise Usage('Truncated FASTQ quality in ' + path)
+                    quality_length += len(quality.rstrip('\r\n'))
+                if quality_length != len(sequence):
+                    raise Usage('Invalid FASTQ quality length in ' + path)
+                header = source.readline()
+            else:
+                for line in source:
+                    if line.startswith('>'):
+                        header = line
+                        break
+                    seq.append(line.strip())
+                else:
+                    header = ''
+                sequence = ''.join(seq)
+            if not sequence:
+                raise Usage('Empty sequence in ' + path)
+            yield sequence
+
+
+@check_point
+def overlap_correct_reads():
+    for program in ('minimap2', 'racon'):
+        if not shutil.which(program):
+            raise Usage('--overlap-correct requires ' + program + ' on PATH')
+    normalized = os.path.join(opt.temp_dir, 'overlap.input.fa')
+    overlaps = os.path.join(opt.temp_dir, 'overlaps.paf')
+    corrected = os.path.join(opt.out_dir, 'corrected.reads.fa')
+    partial = os.path.join(opt.out_dir, '.corrected.reads.partial.fa')
+    count = 0
+    with open(normalized, 'w') as output:
+        for path in opt.se:
+            try:
+                for sequence in fastx_sequences(path):
+                    output.write('>mh{}\n{}\n'.format(count, sequence))
+                    count += 1
+            except (OSError, EOFError, UnicodeError) as error:
+                raise Usage('Could not prepare reads from {}: {}'.format(path, error))
+    if not count:
+        raise Usage('--overlap-correct requires at least one read')
+    with open(overlaps, 'w') as output:
+        run_sub_command(['minimap2', '-x', 'ava-ont', '-k11', '-w5', '-m40',
+                         '-s40', '-c', '-t', str(opt.num_cpu_threads),
+                         normalized, normalized], 'Find read overlaps', stdout=output)
+    if os.path.getsize(overlaps) == 0:
+        raise Usage('No read overlaps found; cannot run overlap correction')
+    with open(partial, 'w') as output:
+        run_sub_command(['racon', '-f', '-u', '-t', str(opt.num_cpu_threads),
+                         normalized, overlaps, normalized],
+                        'Correct reads with overlap consensus', stdout=output)
+    seen = bytearray((count + 7) // 8)
+    num_corrected = 0
+    has_sequence = False
+    with open(partial) as source:
+        for line in source:
+            if line.startswith('>'):
+                if num_corrected and not has_sequence:
+                    raise Usage('Racon output contains an empty read')
+                fields = line[1:].split()
+                if not fields:
+                    raise Usage('Racon output contains an empty read identifier')
+                name = fields[0]
+                if not name.startswith('mh') or not name.endswith('r') or not name[2:-1].isdigit():
+                    raise Usage('Unexpected Racon read identifier: ' + name)
+                index = int(name[2:-1])
+                if index >= count or seen[index // 8] & (1 << (index % 8)):
+                    raise Usage('Duplicate or unexpected Racon read identifier: ' + name)
+                seen[index // 8] |= 1 << (index % 8)
+                num_corrected += 1
+                has_sequence = False
+            elif line.strip():
+                if not num_corrected:
+                    raise Usage('Invalid Racon FASTA output')
+                has_sequence = True
+    if num_corrected and not has_sequence:
+        raise Usage('Racon output contains an empty read')
+    if num_corrected != count:
+        raise Usage('Racon output contains {} of {} input reads; refusing partial correction'.format(
+            num_corrected, count))
+    os.replace(partial, corrected)
+    logger.info('Corrected %d reads; saved to %s', num_corrected, corrected)
+
+
 @check_point
 def create_library_file():
     with open(opt.read_lib_path, 'w') as lib:
@@ -689,7 +835,7 @@ def create_library_file():
 
             print('pe ' + f1 + ' ' + f2, file=lib)
 
-        for i, file_name in enumerate(opt.se):
+        for i, file_name in enumerate(assembly_single_reads()):
             print(file_name, file=lib)
             if inpipe_cmd(file_name) != '':
                 print('se ' + os.path.join(opt.temp_dir, 'inpipe.se.' + str(i)), file=lib)
@@ -724,9 +870,9 @@ def build_library():
             if inpipe_cmd(opt.pe2[i]) != '':
                 create_fifo('pe2', i, inpipe_cmd(opt.pe2[i]))
 
-        for i in range(len(opt.se)):
-            if inpipe_cmd(opt.se[i]) != '':
-                create_fifo('se', i, inpipe_cmd(opt.se[i]))
+        for i, file_name in enumerate(assembly_single_reads()):
+            if inpipe_cmd(file_name) != '':
+                create_fifo('se', i, inpipe_cmd(file_name))
 
         run_sub_command(cmd, 'Convert reads to binary library', verbose=True)
 
@@ -867,6 +1013,8 @@ def assemble(cur_k):
     min_standalone = max(min(opt.k_max * 3 - 1, int(opt.min_contig_len * 1.5)), opt.min_contig_len)
     if opt.max_tip_len >= 0:
         min_standalone = max(opt.max_tip_len + opt.k_max - 1, opt.min_contig_len)
+    if opt.retain_short_standalone:
+        min_standalone = opt.min_contig_len
 
     assembly_cmd = [opt.megahit_core, 'assemble',
                     '-s', graph_prefix(cur_k),
@@ -911,6 +1059,12 @@ def local_assemble(cur_k, kmer_to):
               '-t', str(opt.num_cpu_threads),
               '-o', contig_prefix(cur_k) + '.local.fa',
               '--kmax', str(kmer_to)]
+    if opt.min_local_support:
+        rejected_dir = os.path.join(opt.out_dir, 'rejected_local')
+        mkdir_if_not_exists(rejected_dir)
+        la_cmd += ['--min_local_support', str(opt.min_local_support),
+                   '--rejected_local_file',
+                   os.path.join(rejected_dir, 'k%d.fa' % cur_k)]
     run_sub_command(la_cmd, 'Local assembly for k = %d' % cur_k)
 
 
@@ -936,19 +1090,23 @@ def merge_final(final_k):
         exit(ret_code)
 
 
-def run_sub_command(cmd, msg, verbose=False):
+def run_sub_command(cmd, msg, verbose=False, stdout=None):
     if opt.verbose:
         verbose = True
     logger.info(msg)
     logger.debug('command %s' % ' '.join(cmd))
 
-    p = subprocess.Popen(cmd, stderr=subprocess.PIPE)
+    try:
+        p = subprocess.Popen(cmd, stderr=subprocess.PIPE, stdout=stdout)
+    except OSError as error:
+        raise Usage('Cannot start {}: {}'.format(cmd[0], error))
 
     try:
         while True:
-            line = p.stderr.readline().rstrip()
+            line = p.stderr.readline()
             if not line:
                 break
+            line = line.rstrip()
             if verbose:
                 logger.info(line)
             else:
@@ -983,6 +1141,11 @@ def main(argv=None):
         cpu_dispatch()
         opt.dump()
 
+        if opt.overlap_correct:
+            overlap_correct_reads()
+            corrected = os.path.join(opt.out_dir, 'corrected.reads.fa')
+            if not os.path.isfile(corrected) or os.path.getsize(corrected) == 0:
+                raise Usage('Corrected reads missing or empty: ' + corrected)
         create_library_file()
         build_library()
 
