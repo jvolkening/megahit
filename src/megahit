@@ -72,6 +72,7 @@ Optional Arguments:
     --max-tip-len            <int>          remove tips less than this value [2*k]
     --cleaning-rounds        <int>          number of rounds for graph cleanning [5]
     --no-local                              disable local assembly
+    --retain-short-standalone               with --no-local, retain isolated contigs down to --min-contig-len
     --kmin-1pass                            use 1pass mode to build SdBG of k_min
 
   Presets parameters:
@@ -176,6 +177,7 @@ class Options:
         self.max_tip_len = -1
         self.no_mercy = False
         self.no_local = False
+        self.retain_short_standalone = False
         self.bubble_level = 2
         self.merge_len = 20
         self.merge_similar = 0.95
@@ -308,6 +310,7 @@ def parse_option(argv):
                                     'min-count=',
                                     'no-mercy',
                                     'no-local',
+                                    'retain-short-standalone',
                                     'max-tip-len=',
                                     'bubble-level=',
                                     'prune-level=',
@@ -386,6 +389,8 @@ def parse_option(argv):
             opt.no_mercy = True
         elif option == '--no-local':
             opt.no_local = True
+        elif option == '--retain-short-standalone':
+            opt.retain_short_standalone = True
         elif option == '--disconnect-ratio':
             opt.disconnect_ratio = float(value)
         elif option == '--low-local-ratio':
@@ -487,6 +492,8 @@ def check_and_correct_option():
     # set mode
     if opt.memory < 0:
         raise Usage('-m cannot be less than 0!')
+    if opt.retain_short_standalone and not opt.no_local:
+        raise Usage('--retain-short-standalone requires --no-local')
 
     if opt.presets != '':
         opt.auto_k = True
@@ -867,6 +874,8 @@ def assemble(cur_k):
     min_standalone = max(min(opt.k_max * 3 - 1, int(opt.min_contig_len * 1.5)), opt.min_contig_len)
     if opt.max_tip_len >= 0:
         min_standalone = max(opt.max_tip_len + opt.k_max - 1, opt.min_contig_len)
+    if opt.retain_short_standalone:
+        min_standalone = opt.min_contig_len
 
     assembly_cmd = [opt.megahit_core, 'assemble',
                     '-s', graph_prefix(cur_k),

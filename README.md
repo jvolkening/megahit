@@ -72,9 +72,13 @@ The contigs can be found `final.contigs.fa` in the output directory.
 - `--kmin-1pass`: if sequencing depth is low and too much memory used when build the graph of k_min
 - `--presets meta-large`: if the metagenome is complex (i.e., bio-diversity is high, for example soil metagenomes)
 - `--cleaning-rounds 1 --disconnect-ratio 0`: get less pruned assembly (usually shorter contigs)
+- `--no-local --retain-short-standalone`: retain isolated contigs down to `--min-contig-len` at the iteration where they become standalone. This can recover small sequences, but can also emit error-derived contigs; it does not correct noisy reads.
 - `--continue -o out`: resume an interrupted job from `out`
 
 To see the full manual, run `megahit` without parameters or with `-h`.
+
+An exploratory noisy-read viral assembly benchmark is described in
+[`test_data/benchmark`](test_data/benchmark/README.md).
 
 Also, our [wiki](https://github.com/voutcn/megahit/wiki) may be helpful.
 
