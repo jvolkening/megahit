@@ -38,6 +38,38 @@ python3 "$MEGAHIT_SRC/test_data/benchmark/evaluate.py" minimap2 trial.ref.fa tri
 
 Repeat with `--error 0.05` and a different prefix for the lower-error control.
 For a smaller related-strain experiment, add `--flu-only --minor-strain-depth 60`.
+Use `--seed` with a different value and a new prefix for independent replicates.
+To compare the opt-in local filter on the same reads, rerun MEGAHIT in a
+different output directory with `--min-local-support 2`. The filter can remove
+genuine minor strains, even when excluded candidates are retained separately;
+it is not a strain-aware consensus algorithm.
+In this mode, single-end reads are mapped once across threads during local
+assembly; legacy mode can process each read once per thread. Support counts
+are k-mer observations, not independent-read counts, and include the injected
+parent contig.
+In one 5%-error influenza simulation, filtering reduced 947 contigs to 38,
+but a 60x minor strain's co-occurring SNPs were no longer detected in either
+the final assembly or the excluded candidates. At 10% error the filter did not
+reduce output in the corresponding experiment (139 to 311 contigs).
+In a second 5%-error seed, filtering reduced 1,863 contigs to 43 and reduced
+15x control coverage from 2,370 to 2,203 of 2,500 bases; neither assembly had
+qualifying minor-strain evidence. These simulations use independent errors
+and do not establish performance on real nanopore data.
+Candidate identifiers may recur across iteration files; rename them before
+combining those files for evaluation.
+
+On the 5%-error mixed-genome dataset with two threads, the default assembly
+produced 67,014 contigs and the experimental mode produced 59. However, HSV-1
+reference coverage fell from 152,222 to 135,066 of 152,222 bases, and coverage
+of the 15x control fell from 2,312 to 1,793 of 2,500 bases. The experimental
+run also changes single-end read scheduling as described above; it used the
+portable binary while the default used the BMI2 binary. These observations
+do not establish strain-safe filtering or real-data performance.
+At 10% error, the mixed-genome experimental run used one thread and produced
+1,126 contigs, including 34 without a passing alignment; reference coverage
+was 21,829/29,903 bases for SARS-CoV-2 and 82,801/152,222 for HSV-1. The
+two-thread default run is not a controlled comparison because legacy local
+read processing depends on thread count.
 The benchmark creates hundreds of megabytes of reads and can take substantial
 time and memory. Without `--real-references`, the generator uses random
 sequences with approximately corresponding genome and segment lengths.
@@ -49,3 +81,12 @@ bases. Redundancy is an overlap proxy, not a spurious-contig count: legitimate
 repeats and overlapping contigs also contribute. Identity excludes unaligned
 bases. Full misassembly, variant, false-positive and strain-specific analysis
 requires additional tools and datasets.
+
+For the optional minor-strain simulation, `strain_evaluate.py` checks whether
+at least four simulated minor SNPs occur together in the same primary
+alignment. This is a heuristic specific to the substitution-only simulated
+strain, not a general haplotype or false-positive evaluation:
+
+```sh
+python3 "$MEGAHIT_SRC/test_data/benchmark/strain_evaluate.py" minimap2 trial.ref.fa trial-out/final.contigs.fa NC_026431.1 NC_026431.1_minor
+```

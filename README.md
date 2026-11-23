@@ -73,6 +73,7 @@ The contigs can be found `final.contigs.fa` in the output directory.
 - `--presets meta-large`: if the metagenome is complex (i.e., bio-diversity is high, for example soil metagenomes)
 - `--cleaning-rounds 1 --disconnect-ratio 0`: get less pruned assembly (usually shorter contigs)
 - `--no-local --retain-short-standalone`: retain isolated contigs down to `--min-contig-len` at the iteration where they become standalone. This can recover small sequences, but can also emit error-derived contigs; it does not correct noisy reads.
+- `--min-local-support 2`: experimental filtering of local assemblies with low k-mer support. This can reduce redundant contigs, but can also lose genuine sequence, including low-abundance viruses and strains; it is not recommended when their recovery is critical. Excluded local candidates are saved in `rejected_local/`, but they do not necessarily contain all sequences lost by later graph changes. Keep the original reads.
 - `--continue -o out`: resume an interrupted job from `out`
 
 To see the full manual, run `megahit` without parameters or with `-h`.

@@ -8,6 +8,8 @@ parser.add_argument('prefix', help='output prefix; writes .ref.fa and .reads.fa'
 parser.add_argument('--error', type=float, required=True,
                     help='per-template-base probability of an error event')
 parser.add_argument('--coverage', type=int, default=1000)
+parser.add_argument('--seed', type=int, default=932414,
+                    help='random seed for reproducible simulation (default: 932414)')
 parser.add_argument('--real-references', action='store_true',
                     help='read flu_source.fa, corona_source.fa and herpes_source.fa from cwd')
 parser.add_argument('--flu-only', action='store_true',
@@ -20,7 +22,7 @@ if not 0 <= args.error <= 1 or args.coverage <= 0 or args.minor_strain_depth < 0
 if (args.flu_only or args.minor_strain_depth) and not args.real_references:
     parser.error('--flu-only and --minor-strain-depth require --real-references')
 
-rng = random.Random(932414)
+rng = random.Random(args.seed)
 alphabet = 'ACGT'
 sizes = [2341, 2341, 2233, 1778, 1565, 1413, 1027, 890]
 entries = [('segment_%d' % (i + 1), size, args.coverage)

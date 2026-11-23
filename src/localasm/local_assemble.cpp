@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iostream>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -13,6 +14,7 @@
 #include "kmlib/kmbit.h"
 
 #include "hash_mapper.h"
+#include "local_support.h"
 #include "mapping_result_collector.h"
 #include "sequence/io/contig/contig_reader.h"
 #include "sequence/io/contig/contig_writer.h"
@@ -166,7 +168,8 @@ int32_t GetMaxLocalRange(const SequenceLibCollection &lib_collection,
 void MapToContigs(const HashMapper &mapper,
                   const SequenceLibCollection &lib_collection,
                   const std::vector<TInsertSize> &insert_sizes,
-                  MappingResultCollector *collector) {
+                  MappingResultCollector *collector,
+                  bool count_each_read_once) {
   for (unsigned lib_id = 0; lib_id < lib_collection.size(); ++lib_id) {
     auto &lib = lib_collection.GetLib(lib_id);
     int32_t local_range = LocalRange(lib, insert_sizes[lib_id]);
@@ -202,15 +205,20 @@ void MapToContigs(const HashMapper &mapper,
       }
     } else {
 #pragma omp parallel reduction(+ : num_added, num_mapped)
-      for (size_t i = 0; i < lib.seq_count(); ++i) {
-        auto seq = lib.GetSequenceView(i);
-        auto rec = mapper.TryMap(seq);
+      {
+        // Preserve legacy sampling unless support filtering is enabled.
+        const size_t first = count_each_read_once ? omp_get_thread_num() : 0;
+        const size_t step = count_each_read_once ? omp_get_num_threads() : 1;
+        for (size_t i = first; i < lib.seq_count(); i += step) {
+          auto seq = lib.GetSequenceView(i);
+          auto rec = mapper.TryMap(seq);
 
-        if (rec.valid) {
-          ++num_mapped;
-          num_added += collector->AddSingle(
-              rec, mapper.refseq().GetSeqView(rec.contig_id).length(),
-              seq.length(), local_range);
+          if (rec.valid) {
+            ++num_mapped;
+            num_added += collector->AddSingle(
+                rec, mapper.refseq().GetSeqView(rec.contig_id).length(),
+                seq.length(), local_range);
+          }
         }
       }
     }
@@ -238,9 +246,17 @@ void AssembleAndOutput(const HashMapper &mapper, const SeqPackage &read_pkg,
   std::deque<ContigInfo> out_contig_infos;
 
   ContigWriter local_contig_writer(output_file);
+  std::unique_ptr<ContigWriter> rejected_writer;
+  if (opt.min_local_support > 0) {
+    rejected_writer.reset(new ContigWriter(opt.rejected_local_file));
+  }
+  uint64_t filtered = 0;
+  uint64_t emitted = 0;
+  uint64_t unscored = 0;
 
 #pragma omp parallel for private(contig_graph, seq, contig_end, reads, \
                                  out_contigs, out_contig_infos)        \
+    reduction(+ : filtered, emitted, unscored)                        \
     schedule(dynamic)
   for (uint64_t cid = 0; cid < mapper.refseq().seq_count(); ++cid) {
     auto contig_view = mapper.refseq().GetSeqView(cid);
@@ -293,11 +309,30 @@ void AssembleAndOutput(const HashMapper &mapper, const SeqPackage &read_pkg,
       for (uint64_t j = 0; j < out_contigs.size(); ++j) {
         if (out_contigs[j].size() > opt.min_contig_len &&
             out_contigs[j].size() > opt.kmax) {
+          if (opt.min_local_support > 0) {
+            auto support = AssessLocalSupport(out_contig_infos[j],
+                                              out_contigs[j].size(),
+                                              static_cast<uint32_t>(
+                                                  opt.min_local_support));
+            if (support == LocalSupport::kUnknown) {
+              ++unscored;
+            } else if (support == LocalSupport::kUnsupported) {
+              rejected_writer->WriteLocalContig(out_contigs[j].str(), cid,
+                                                strand, j);
+              ++filtered;
+              continue;
+            }
+          }
           auto str = out_contigs[j].str();
           local_contig_writer.WriteLocalContig(str, cid, strand, j);
+          ++emitted;
         }
       }
     }
+  }
+  if (opt.min_local_support > 0) {
+    xinfo("Local contigs emitted: {}, filtered by k-mer support: {}, "
+          "unscored: {}\n", emitted, filtered, unscored);
   }
 }
 
@@ -333,7 +368,8 @@ void RunLocalAssembly(const LocalAsmOption &opt) {
   timer.start();
 
   MappingResultCollector collector(mapper.refseq().seq_count());
-  MapToContigs(mapper, lib_collection, insert_sizes, &collector);
+  MapToContigs(mapper, lib_collection, insert_sizes, &collector,
+               opt.min_local_support > 0);
   timer.stop();
   xinfo("Mapping time elapsed: {}\n", timer.elapsed());
 

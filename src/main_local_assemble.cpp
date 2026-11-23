@@ -43,12 +43,17 @@ LocalAsmOption ParseLocalAsmOptions(int argc, char *argv[]) {
   desc.AddOption("seed_kmer", "", opt.seed_kmer,
                  "kmer size for seeding alignments");
   desc.AddOption("min_contig_len", "", opt.min_contig_len, "");
+  desc.AddOption("min_local_support", "", opt.min_local_support,
+                 "minimum local k-mer observation count for at least half of "
+                 "a local contig's k-mers; 0 disables filtering");
   desc.AddOption("min_mapping_len", "", opt.min_mapping_len, "");
   desc.AddOption("sparsity", "", opt.sparsity, "sparsity of hash mapper");
   desc.AddOption("similarity", "", opt.similarity,
                  "alignment similarity threshold");
   desc.AddOption("num_threads", "t", opt.num_threads, "");
   desc.AddOption("output_file", "o", opt.output_file, "");
+  desc.AddOption("rejected_local_file", "", opt.rejected_local_file,
+                 "output file for low-support local candidates");
 
   try {
     desc.Parse(argc, argv);
@@ -60,6 +65,13 @@ LocalAsmOption ParseLocalAsmOptions(int argc, char *argv[]) {
     }
     if (opt.output_file == "") {
       throw std::logic_error("no output file!");
+    }
+    if (opt.min_local_support < 0) {
+      throw std::logic_error("min_local_support must be nonnegative");
+    }
+    if ((opt.min_local_support > 0) != !opt.rejected_local_file.empty()) {
+      throw std::logic_error(
+          "min_local_support and rejected_local_file must be set together");
     }
     if (opt.num_threads == 0) {
       opt.num_threads = omp_get_max_threads();

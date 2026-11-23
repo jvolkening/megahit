@@ -35,12 +35,14 @@ struct LocalAsmOption {
   uint32_t seed_kmer{31};
 
   uint32_t min_contig_len{200};
+  int32_t min_local_support{0};
   uint32_t sparsity{8};
   double similarity{0.8};
   uint32_t min_mapping_len{75};
 
   uint32_t num_threads{0};
   std::string output_file;
+  std::string rejected_local_file;
 };
 
 void RunLocalAssembly(const LocalAsmOption &opt);

@@ -29,8 +29,17 @@ def coverage(intervals):
     return total
 
 
-refs = {name: len(seq) for name, seq in fasta(reference)}
-ctgs = {name: len(seq) for name, seq in fasta(contigs)}
+def lengths(path):
+    records = {}
+    for name, sequence in fasta(path):
+        if name in records:
+            raise ValueError('duplicate FASTA identifier in {}: {}'.format(path, name))
+        records[name] = len(sequence)
+    return records
+
+
+refs = lengths(reference)
+ctgs = lengths(contigs)
 cmd = [aligner, '-x', 'map-ont', '-k', '11', '-w', '5', '-s', '20',
        '-c', reference, contigs]
 alignments = subprocess.run(cmd, check=True, stdout=subprocess.PIPE, text=True)

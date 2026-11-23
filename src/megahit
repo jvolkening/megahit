@@ -72,6 +72,9 @@ Optional Arguments:
     --max-tip-len            <int>          remove tips less than this value [2*k]
     --cleaning-rounds        <int>          number of rounds for graph cleanning [5]
     --no-local                              disable local assembly
+    --min-local-support      <int>          experimental: require this many local k-mer observations for
+                                            at least half a local contig's k-mers (0 disables) [0];
+                                            may lose genuine strains; excluded candidates are saved separately
     --retain-short-standalone               with --no-local, retain isolated contigs down to --min-contig-len
     --kmin-1pass                            use 1pass mode to build SdBG of k_min
 
@@ -177,6 +180,7 @@ class Options:
         self.max_tip_len = -1
         self.no_mercy = False
         self.no_local = False
+        self.min_local_support = 0
         self.retain_short_standalone = False
         self.bubble_level = 2
         self.merge_len = 20
@@ -310,6 +314,7 @@ def parse_option(argv):
                                     'min-count=',
                                     'no-mercy',
                                     'no-local',
+                                    'min-local-support=',
                                     'retain-short-standalone',
                                     'max-tip-len=',
                                     'bubble-level=',
@@ -389,6 +394,8 @@ def parse_option(argv):
             opt.no_mercy = True
         elif option == '--no-local':
             opt.no_local = True
+        elif option == '--min-local-support':
+            opt.min_local_support = int(value)
         elif option == '--retain-short-standalone':
             opt.retain_short_standalone = True
         elif option == '--disconnect-ratio':
@@ -459,6 +466,8 @@ def setup_output_dir():
             raise Usage(
                 'Output directory ' + opt.out_dir +
                 ' already exists, please change the parameter -o to another value to avoid overwriting.')
+        if os.path.exists(os.path.join(opt.out_dir, 'rejected_local')):
+            raise Usage('rejected_local already exists; use a fresh output directory')
 
         if opt.temp_dir == '':
             opt.temp_dir = os.path.join(opt.out_dir, 'tmp')
@@ -494,6 +503,10 @@ def check_and_correct_option():
         raise Usage('-m cannot be less than 0!')
     if opt.retain_short_standalone and not opt.no_local:
         raise Usage('--retain-short-standalone requires --no-local')
+    if opt.min_local_support < 0 or opt.min_local_support > 2147483647:
+        raise Usage('--min-local-support must be between 0 and 2147483647')
+    if opt.min_local_support and opt.no_local:
+        raise Usage('--min-local-support cannot be combined with --no-local')
 
     if opt.presets != '':
         opt.auto_k = True
@@ -920,6 +933,12 @@ def local_assemble(cur_k, kmer_to):
               '-t', str(opt.num_cpu_threads),
               '-o', contig_prefix(cur_k) + '.local.fa',
               '--kmax', str(kmer_to)]
+    if opt.min_local_support:
+        rejected_dir = os.path.join(opt.out_dir, 'rejected_local')
+        mkdir_if_not_exists(rejected_dir)
+        la_cmd += ['--min_local_support', str(opt.min_local_support),
+                   '--rejected_local_file',
+                   os.path.join(rejected_dir, 'k%d.fa' % cur_k)]
     run_sub_command(la_cmd, 'Local assembly for k = %d' % cur_k)
 
 

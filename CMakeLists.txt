@@ -100,6 +100,7 @@ add_custom_target(megahit_toolkit ALL
         COMMAND ${CMAKE_COMMAND} -E create_symlink megahit_core_no_hw_accel megahit_toolkit)
 
 set(TEST_DATA ${CMAKE_SOURCE_DIR}/test_data)
+add_executable(test_local_support EXCLUDE_FROM_ALL ${TEST_DATA}/test_local_support.cpp)
 
 add_custom_target(
         simple_test
@@ -107,6 +108,8 @@ add_custom_target(
         COMMAND MEGAHIT_NUM_MERCY_FACTOR=1.5 ./megahit --test -t 4 --mem-flag 0 --no-hw-accel
         COMMAND ./megahit --test -t 2 --kmin-1pass --prune-level 3 --prune-depth 0
         COMMAND python3 ${TEST_DATA}/test_short_standalone.py ./megahit
+        COMMAND ./test_local_support
+        COMMAND python3 ${TEST_DATA}/test_local_support.py ./megahit
         COMMAND rm -rf test-random && python3 ${TEST_DATA}/generate_random_fasta.py > random.fa && ./megahit -r random.fa --k-list 255 --min-count 1 -o test-random
         COMMAND rm -rf test-fastg && ./megahit --test -t 2 --mem-flag 2 --keep-tmp-files -o test-fastg
         COMMAND rm -rf test-empty && ./megahit -r ${TEST_DATA}/empty.fa -o test-empty
@@ -117,6 +120,7 @@ add_custom_target(
 
 add_dependencies(megahit megahit_core megahit_core_popcnt megahit_core_no_hw_accel megahit_toolkit)
 add_dependencies(simple_test megahit)
+add_dependencies(simple_test test_local_support)
 
 install(TARGETS megahit_core megahit_core_popcnt megahit_core_no_hw_accel DESTINATION bin)
 install(PROGRAMS ${CMAKE_CURRENT_BINARY_DIR}/megahit ${CMAKE_CURRENT_BINARY_DIR}/megahit_toolkit DESTINATION bin)
